@@ -107,6 +107,8 @@ export function parseCalmWorkingShipOverride(stored: string | undefined): {
   if (!Array.isArray(record.sails) || record.sails.length === 0 || record.sails.length > 16 || !record.sails.every((sail) => spriteText(sail, 1))) return { diagnostic: "sails must be a non-empty array of safe text rows" };
   const sailWidth = Array.from(record.sails[0] as string).length;
   if (!record.sails.every((sail) => Array.from(sail as string).length === sailWidth)) return { diagnostic: "every sail must have the same width" };
+  const hullWidth = Array.from(record.hull as string).length;
+  if (record.sailOffset as number + sailWidth > Math.max(hullWidth, sailWidth)) return { diagnostic: "sailOffset and sail width cannot fit the hull" };
   if (!Array.isArray(record.wave) || record.wave.length === 0 || record.wave.length > 16 || !record.wave.every(oneCellGlyph)) return { diagnostic: "wave must be a non-empty array of one-cell safe glyphs" };
   return {
     override: {
@@ -267,7 +269,7 @@ function createStationaryCalmWorkingShipSprite(override: CalmWorkingShipOverride
       if (width < sailWidth) frame = [water(0, width)];
       else if (width < hullWidth) frame = [[...water(0, position), { text: sail, color: "boat" }, ...water(position + sailWidth, width - position - sailWidth)]];
       else frame = [
-        [{ text: " ".repeat(position + override.sailOffset), color: "plain" }, { text: sail, color: "boat" }],
+        [{ text: " ".repeat(position + override.sailOffset), color: "plain" }, { text: sail, color: "boat" }, { text: " ".repeat(width - position - override.sailOffset - sailWidth), color: "plain" }],
         [...water(0, position), { text: override.hull, color: "boat" }, ...water(position + hullWidth, width - position - hullWidth)],
       ];
       renderedPosition = position;

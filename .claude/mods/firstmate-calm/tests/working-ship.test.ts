@@ -29,6 +29,7 @@ describe("the working ship", () => {
     const { clock, journal } = world(on, { preference: "on\n", workingBoat: CAPTAIN_BOAT });
     const raster = rasterOf(await $.ui.render(spinner("agent-main", { columns: 40, rows: 24 })))!;
     const { glyphs } = decodeCells(raster.cells, 38, 2);
+    expect(glyphs[0]).toHaveLength(38);
     expect(glyphs[0]!.indexOf("◁|")).toBe(18);
     expect(glyphs[1]!.indexOf("\\__/")).toBe(17);
     await clock.advance(439);
