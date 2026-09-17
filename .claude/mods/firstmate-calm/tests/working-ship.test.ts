@@ -2,6 +2,7 @@
 // working row while Calm is on, its cadence on the mocked clock, its size against the
 // viewport, and how it lets go of a site the surface no longer draws.
 import { describe, expect, test } from "claude-code/testing";
+import { parseCalmWorkingShipOverride } from "../lib/fm-calm-working-ship-sprite.ts";
 import { calmCommand, decodeCells, isStock, rasterOf, spinner, themeChange, unmeasuredSpinner, WORKING_BOAT, world } from "./support.ts";
 
 const SAIL = "◿│◣";
@@ -50,6 +51,12 @@ describe("the working ship", () => {
     const malformedRaster = rasterOf(await $.ui.render(spinner("agent-malformed", { columns: 40, rows: 24 })))!;
     expect(malformed.journal.fsReads).toContain(WORKING_BOAT);
     expect(decodeCells(malformedRaster.cells, 38, 2).glyphs[1]).toContain(HULL);
+  });
+
+  test("rejects override text that is not one terminal cell per code point", () => {
+    const base = { version: 1, mode: "stationary", tickMs: 440, hull: "____", sails: ["a"], sailOffset: 1, wave: ["~"] };
+    expect(parseCalmWorkingShipOverride(JSON.stringify({ ...base, hull: "界" })).override).toBeUndefined();
+    expect(parseCalmWorkingShipOverride(JSON.stringify({ ...base, sails: ["a\u0301"] })).override).toBeUndefined();
   });
 
   test("replaces the spinner with a two-row raster sized to the row inside the transcript margin", async ($, on) => {
