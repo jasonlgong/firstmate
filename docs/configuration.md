@@ -43,7 +43,7 @@ This preference is local to each Firstmate home and is not part of secondmate in
 It resolves under the effective Firstmate home exactly as `config/calm` does, including `FM_CONFIG_OVERRIDE`, and is not inherited by secondmate homes.
 An absent, unreadable, or invalid file leaves the stock boat in place and emits one startup diagnostic without blocking either harness.
 Version 1 accepts only a stationary boat with a positive integer `tickMs`, safe text `hull`, equal-width `sails`, nonnegative `sailOffset`, and one-cell `wave` glyphs.
-The captain's current boat is installed with this exact content:
+To install a stationary boat, create the file with this exact content:
 
 ```json
 {
