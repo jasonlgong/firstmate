@@ -3814,6 +3814,17 @@ if [ "$KIND" != secondmate ]; then
     fi
     ;;
   esac
+  # Embed complete JSON string literals in the JavaScript/TypeScript hooks.
+  # Shell quoting alone does not preserve quotes or backslashes in source.
+  case "$HARNESS" in
+  opencode* | pi | pi-signed | omp)
+    j_busy_event=$(node -p 'JSON.stringify(process.argv[1])' -- "$FM_ROOT/bin/fm-busy-event.sh") || exit 1
+    j_state=$(node -p 'JSON.stringify(process.argv[1])' -- "$STATE_REAL") || exit 1
+    j_id=$(node -p 'JSON.stringify(process.argv[1])' -- "$ID") || exit 1
+    j_busy_gen=$(node -p 'JSON.stringify(process.argv[1])' -- "$BUSY_GEN") || exit 1
+    j_turnend=$(node -p 'JSON.stringify(process.argv[1])' -- "$TURNEND") || exit 1
+    ;;
+  esac
   case "$HARNESS" in
   claude*)
     # Semantic busy-state hooks (bin/fm-busy-lib.sh): UserPromptSubmit opens
@@ -3886,9 +3897,9 @@ EOF
 import { execFile } from "node:child_process";
 const busyEvent = (state, event) =>
   new Promise((resolve) => {
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "apply", "$STATE_REAL", "$ID", state,
-      "--gen", "$BUSY_GEN", "--source", "opencode-plugin", "--event", event,
+    execFile($j_busy_event, [
+      "apply", $j_state, $j_id, state,
+      "--gen", $j_busy_gen, "--source", "opencode-plugin", "--event", event,
     ], () => resolve());
   });
 export const FmBusyState = async () => {
@@ -3915,7 +3926,7 @@ export const FmBusyState = async () => {
           await busyEvent("idle", "session-idle");
         }
         await new Promise((resolve) => {
-          execFile("touch", ["$TURNEND"], () => resolve());
+          execFile("touch", [$j_turnend], () => resolve());
         });
       }
     },
@@ -3942,9 +3953,9 @@ EOF
 import { execFile } from "node:child_process";
 const busyEvent = (state: string, event: string) =>
   new Promise<void>((resolve) => {
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "apply", "$STATE_REAL", "$ID", state,
-      "--gen", "$BUSY_GEN", "--source", "pi-ext", "--event", event,
+    execFile($j_busy_event, [
+      "apply", $j_state, $j_id, state,
+      "--gen", $j_busy_gen, "--source", "pi-ext", "--event", event,
     ], () => resolve());
   });
 export default function (pi: any) {
@@ -3953,7 +3964,7 @@ export default function (pi: any) {
     if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
     return busyEvent("idle", "agent-settled");
   });
-  pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
+  pi.on("turn_end", () => execFile("touch", [$j_turnend]));
   // A native harness can make progress inside one Pi turn. This separate
   // marker prevents false wedge alarms without fabricating a completed turn.
   let lastProgress = 0;
@@ -3961,8 +3972,8 @@ export default function (pi: any) {
     const now = Date.now();
     if (now - lastProgress < 1000) return;
     lastProgress = now;
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "progress", "$STATE_REAL", "$ID", "--gen", "$BUSY_GEN",
+    execFile($j_busy_event, [
+      "progress", $j_state, $j_id, "--gen", $j_busy_gen,
     ]);
   });
 }
@@ -3990,9 +4001,9 @@ EOF
 import { execFile } from "node:child_process";
 const busyEvent = (state: string, event: string) =>
   new Promise<void>((resolve) => {
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "apply", "$STATE_REAL", "$ID", state,
-      "--gen", "$BUSY_GEN", "--source", "omp-ext", "--event", event,
+    execFile($j_busy_event, [
+      "apply", $j_state, $j_id, state,
+      "--gen", $j_busy_gen, "--source", "omp-ext", "--event", event,
     ], () => resolve());
   });
 export default function (pi: any) {
@@ -4001,7 +4012,7 @@ export default function (pi: any) {
     if (event && event.willContinue === true) return;
     return busyEvent("idle", "agent-end");
   });
-  pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
+  pi.on("turn_end", () => execFile("touch", [$j_turnend]));
 }
 EOF
     ;;
