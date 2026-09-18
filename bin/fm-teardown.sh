@@ -87,6 +87,10 @@
 # this home or any locally registered Firstmate home may name the same live path
 # in its worktree= or home=. One live path with two task records is the reuse
 # collision itself, whichever record is stale.
+# A live Git worktree must first share the recorded project's real Git common
+# directory, even when it is not recognized as a managed pool slot. A different
+# clone of the same origin is not ownership evidence and refuses before cleanup,
+# including under --force; its worktree and task record remain untouched.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
@@ -973,6 +977,23 @@ BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
 PROJ=$(fm_meta_get "$META" project)
+# Check repository ownership independently of managed-slot recognition: a
+# foreign clone fails that predicate and must not fall through as unmanaged.
+# Missing/non-Git paths retain their existing cleanup behavior; a present but
+# unresolvable Git marker cannot prove ownership and refuses.
+if [ "$TEARDOWN_META_KIND" != secondmate ] && [ -d "$WT" ]; then
+  TEARDOWN_WT_COMMON=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$TEARDOWN_WT_COMMON" ] || [ -e "$WT/.git" ] || [ -L "$WT/.git" ]; then
+    TEARDOWN_PROJECT_COMMON=$(git -C "$PROJ" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    TEARDOWN_WT_COMMON=$([ -n "$TEARDOWN_WT_COMMON" ] && CDPATH='' cd -- "$TEARDOWN_WT_COMMON" 2>/dev/null && pwd -P) || TEARDOWN_WT_COMMON=
+    TEARDOWN_PROJECT_COMMON=$([ -n "$TEARDOWN_PROJECT_COMMON" ] && CDPATH='' cd -- "$TEARDOWN_PROJECT_COMMON" 2>/dev/null && pwd -P) || TEARDOWN_PROJECT_COMMON=
+    if [ -z "$TEARDOWN_WT_COMMON" ] || [ -z "$TEARDOWN_PROJECT_COMMON" ] \
+       || [ "$TEARDOWN_WT_COMMON" != "$TEARDOWN_PROJECT_COMMON" ]; then
+      echo "REFUSED: task $ID's recorded worktree $WT does not share the Git common directory of recorded project ${PROJ:-<missing>}; ownership cannot be proved, so nothing was changed - not even with --force." >&2
+      exit 1
+    fi
+  fi
+fi
 T_ORCA=
 [ "$BACKEND" != orca ] || T_ORCA=$T
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then

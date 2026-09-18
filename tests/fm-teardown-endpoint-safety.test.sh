@@ -966,6 +966,78 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
+# Two clones of one origin are different owners even when the foreign worktree
+# is clean and landed, and even when its claim happens to use the same task id.
+test_wrong_clone_worktree_refuses_before_cleanup() {
+  local dir id=old-task variant worker alive rc before_branch
+  for variant in clean dirty force non-pool same-id-other-home; do
+    dir=$(make_case "wrong-clone-$variant")
+    mark_case_as_treehouse_pool "$dir"
+    rm "$dir/worktree/sentinel"
+    git -C "$dir/worktree" checkout -qb live-holder
+    git clone -q --bare "$dir/project" "$dir/origin.git"
+    git -C "$dir/project" remote add origin "$dir/origin.git"
+    git -C "$dir/project" fetch -q origin
+    git clone -q "$dir/origin.git" "$dir/foreign-project"
+    [ "$(git -C "$dir/project" remote get-url origin)" = \
+      "$(git -C "$dir/foreign-project" remote get-url origin)" ] \
+      || fail "wrong-clone fixture must share an origin"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+      "worktree=$dir/worktree" "project=$dir/foreign-project" \
+      "kind=ship" "mode=direct-PR"
+    claim_pool_slot "$dir" other-task "$dir/other-home"
+    case "$variant" in
+      dirty) printf 'live work\n' > "$dir/worktree/sentinel" ;;
+      non-pool) rm "$dir/pool/treehouse-state.json" ;;
+      same-id-other-home) claim_pool_slot "$dir" "$id" "$dir/other-home" ;;
+    esac
+    cp "$dir/home/state/$id.meta" "$dir/meta-before"
+    cp "$dir/pool/1/.fm-slot-owner" "$dir/claim-before"
+    before_branch=$(git -C "$dir/worktree" rev-parse HEAD)
+    # A failed pre-fix run must remain hermetic after it passes the landed gate.
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/no-mistakes"
+    cp "$dir/fakebin/no-mistakes" "$dir/fakebin/gh-axi"
+    cp "$dir/fakebin/no-mistakes" "$dir/fakebin/gh"
+    chmod +x "$dir/fakebin/no-mistakes" "$dir/fakebin/gh-axi" "$dir/fakebin/gh"
+    ( cd "$dir/worktree" && exec sleep 120 ) &
+    worker=$!
+    set +e
+    if [ "$variant" = force ]; then
+      run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+    else
+      FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+      FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+        "$TEARDOWN" "$id" > "$dir/stdout" 2> "$dir/stderr"
+    fi
+    rc=$?
+    alive=0
+    kill -0 "$worker" 2>/dev/null && alive=1
+    kill "$worker" 2>/dev/null
+    wait "$worker" 2>/dev/null
+    set -e
+    [ "$alive" = 1 ] || fail "$variant: teardown killed the foreign worker"
+    [ "$rc" -ne 0 ] || fail "$variant: wrong-clone teardown succeeded"
+    cmp -s "$dir/meta-before" "$dir/home/state/$id.meta" \
+      || fail "$variant: wrong-clone teardown changed task metadata"
+    cmp -s "$dir/claim-before" "$dir/pool/1/.fm-slot-owner" \
+      || fail "$variant: wrong-clone teardown changed the foreign claim"
+    [ "$(git -C "$dir/worktree" symbolic-ref --short HEAD)" = live-holder ] \
+      || fail "$variant: wrong-clone teardown detached the foreign branch"
+    [ "$(git -C "$dir/project" rev-parse refs/heads/live-holder)" = "$before_branch" ] \
+      || fail "$variant: wrong-clone teardown deleted or changed the foreign branch"
+    [ ! -s "$dir/runtime.log" ] \
+      || fail "$variant: wrong-clone teardown reached the runtime: $(cat "$dir/runtime.log")"
+    assert_contains "$(cat "$dir/stderr")" "Git common directory" \
+      "$variant: refusal must identify repository ownership"
+    if [ "$variant" = dirty ]; then
+      assert_contains "$(cat "$dir/worktree/sentinel")" "live work" \
+        "dirty wrong-clone teardown changed the foreign work"
+    fi
+  done
+  pass "fm-teardown: wrong-clone worktrees refuse before process, branch, claim, endpoint, or slot cleanup"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1366,6 +1438,7 @@ test_already_gone_endpoint_still_completes_without_a_refusal() {
   pass "fm-teardown: an already-exited endpoint, and a server that is already gone, still complete cleanup silently"
 }
 
+test_wrong_clone_worktree_refuses_before_cleanup
 test_invalid_endpoint_records_refuse_before_mutation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
