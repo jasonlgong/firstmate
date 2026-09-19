@@ -1764,10 +1764,16 @@ def inspect(path):
 def tracked_scratch_changes(name):
     # A tracked scratch file differing from HEAD (staged or unstaged) is real
     # work; preserve the whole slot rather than relocating it.
-    code = subprocess.call(["git", "-C", wt, "diff", "--quiet", "HEAD", "--", name],
-                           stderr=subprocess.DEVNULL)
-    if code in (0, 1):
-        return code == 1
+    head = subprocess.call(["git", "-C", wt, "rev-parse", "--verify", "-q", "HEAD"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if head not in (0, 1):
+        raise RuntimeError("cannot resolve HEAD while inspecting tracked scratch")
+    if head == 0:
+        code = subprocess.call(["git", "-C", wt, "diff", "--quiet", "HEAD", "--", name],
+                               stderr=subprocess.DEVNULL)
+        if code in (0, 1):
+            return code == 1
+        raise RuntimeError("cannot inspect tracked scratch against HEAD")
     symbolic = subprocess.run(["git", "-C", wt, "symbolic-ref", "-q", "HEAD"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               check=False)
