@@ -163,9 +163,8 @@
 # leased home and state in place instead of hiding a still-held lease.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
-#   checks, and discards secondmate child work
-#   for kind=secondmate. Only use it when the captain has explicitly said to
-#   discard the work.
+#   checks, and discards secondmate child work for kind=secondmate. Only use it
+#   when the captain has explicitly said to discard the work.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
 #   teardown then proceeds only when the recorded endpoint is confirmed dead or
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
