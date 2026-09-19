@@ -73,6 +73,15 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
+# Before ordinary Treehouse task return (not Orca or secondmate retirement),
+# scratch/ and .scratch/ are inspected before cleanup and again after reaping.
+# Repository data, tracked edits, and mixed tracked/untracked scratch refuse
+# return with the slot and task record retained, including under --force.
+# Empty untracked scratch directories may be removed; all other untracked
+# scratch is renamed into data/<id>/scratch-recovery-*/ without deleting it.
+# Recovery must be outside the slot on the same filesystem; failure refuses.
+# Recovery is durable and never automatically purged. Ship dirty-work gates
+# remain unchanged. Slots with no scratch impose no additional Git requirement.
 # Before destructive cleanup, teardown validates task check artifacts as
 # ordinary single-link files on the state device. It refuses and preserves
 # task state when that proof fails; otherwise it removes the task's check,
@@ -1711,6 +1720,90 @@ teardown_treehouse_return() {
   return 1
 }
 
+# Inspect before destructive cleanup, then inspect again after process reaping.
+# Nonempty untracked scratch is retained, never classified disposable by name.
+teardown_task_scratch() {  # <check|retain>
+  # No scratch means no new Git requirement (including non-Git endpoint fixtures).
+  if [ ! -e "$WT/scratch" ] && [ ! -L "$WT/scratch" ] \
+      && [ ! -e "$WT/.scratch" ] && [ ! -L "$WT/.scratch" ]; then
+    return 0
+  fi
+  python3 - "$WT" "$DATA/$ID" "$1" <<'PY'
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+
+wt, recovery, mode = sys.argv[1:]
+wt = os.path.realpath(wt)
+
+def refuse(message):
+    raise RuntimeError(message)
+
+def git(*args):
+    return subprocess.check_output(["git", "-C", wt, *args], stderr=subprocess.PIPE)
+
+def inspect(path):
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode):
+        return
+    with os.scandir(path) as scan:
+        entries = list(scan)
+    names = {entry.name for entry in entries}
+    # Do not rely on git clean's incomplete nested-repository protection.
+    # Include gitfiles, bare stores, and linked-worktree administrative dirs.
+    if ".git" in names or ("HEAD" in names and ("objects" in names or "commondir" in names)):
+        refuse("repository data in " + repr(path) + "; preserve it in place and reconcile it before returning this slot")
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            inspect(entry.path)
+
+try:
+    top = os.fsdecode(git("rev-parse", "--show-toplevel")).rstrip("\n")
+    if os.path.realpath(top) != wt:
+        refuse("scratch is not in the recorded Git worktree")
+    paths = [name for name in ("scratch", ".scratch") if os.path.lexists(os.path.join(wt, name))]
+    candidates = []
+    for name in paths:
+        path = os.path.join(wt, name)
+        inspect(path)
+        # Preserve staged and unstaged work, even in a completed scout.
+        if subprocess.call(["git", "-C", wt, "diff", "--quiet", "HEAD", "--", name]) != 0:
+            refuse("tracked scratch changes in " + repr(path))
+        tracked = git("ls-files", "-z", "--", name)
+        if tracked:
+            if git("status", "--porcelain", "--untracked-files=all", "--ignored", "--", name):
+                refuse("mixed tracked and untracked scratch in " + repr(path))
+            continue
+        candidates.append((name, path))
+    if candidates:
+        # A recovery directory inside the returned slot would be cleaned too.
+        if os.path.commonpath([wt, os.path.realpath(recovery)]) == wt:
+            refuse("scratch recovery directory is inside the worktree")
+        if os.path.islink(recovery) or os.path.islink(os.path.dirname(recovery)):
+            refuse("scratch recovery directory must not be a symlink")
+    if mode == "retain":
+        destination = None
+        for name, path in candidates:
+            # An empty directory is positively disposable. Everything else stays.
+            if os.path.isdir(path) and not os.path.islink(path) and not os.listdir(path):
+                os.rmdir(path)
+                continue
+            if destination is None:
+                os.makedirs(recovery, exist_ok=True)
+                destination = tempfile.mkdtemp(prefix="scratch-recovery-", dir=recovery)
+                print("teardown: retaining scratch at " + repr(destination) + "; no automatic deletion", flush=True)
+            # Rename only: no cross-device copy/delete fallback and no overwrite.
+            # A failed return or interrupted retry leaves recovery data durable.
+            os.rename(path, os.path.join(destination, name))
+except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+    print("REFUSED: scratch preservation for " + repr(wt) + ": " + str(error)
+          + ". Slot and task record retained; manual reconciliation required.", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -3288,6 +3381,11 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
+if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] \
+    && teardown_owns_worktree && [ -d "$WT" ]; then
+  teardown_task_scratch check || exit 1
+fi
+
 # A Herdr close may reposition shared workspace order, so the whole
 # destructive sequence below (worktree return, pane close, record removal)
 # runs under the named-session presentation lock, acquired BEFORE anything is
@@ -3425,6 +3523,7 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != secondmate ]; then
 elif [ "$KIND" != secondmate ] && ! teardown_owns_worktree; then
   :
 elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
+  teardown_task_scratch retain || exit 1
   branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
   if [ "$branch" != "HEAD" ]; then
     if git -C "$WT" checkout --detach -q 2>/dev/null; then
