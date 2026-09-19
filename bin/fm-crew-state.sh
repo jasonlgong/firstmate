@@ -859,6 +859,7 @@ if [ "$HAVE_RUN" = 1 ]; then
             *) RUN_DETAIL="CI readiness reported; passing checks unverified" ;;
           esac ;;
         passed-with-skips) RUN_STATE="done"; RUN_DETAIL="run completed with skipped steps; CI unverified" ;;
+        passed-with-override) RUN_STATE="done"; RUN_DETAIL="run completed with CI override; CI not green/unverified" ;;
         failed)
           if nm_reclassify_failed_run_as_held_green; then :; else
             RUN_STATE=failed; RUN_DETAIL="run failed"

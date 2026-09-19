@@ -73,13 +73,6 @@
 # declared scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
-# Ship tasks may explicitly declare report=data/<task-id>/report.md (or the
-# absolute $DATA/<task-id>/report.md) in state/<task-id>.meta. Firstmate records
-# this field under the task meta lock when assigning a report deliverable.
-# Without --force, teardown refuses a noncanonical declaration or a missing,
-# non-regular, or symlinked canonical report before destructive cleanup. Brief
-# and status prose never imply this requirement. --force authorizes discarding
-# a declared ship report under the same explicit-discard boundary as scouts.
 # Before destructive cleanup, teardown validates task check artifacts as
 # ordinary single-link files on the state device. It refuses and preserves
 # task state when that proof fails; otherwise it removes the task's check,
@@ -170,7 +163,7 @@
 # leased home and state in place instead of hiding a still-held lease.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
-#   checks and declared ship report checks, and discards secondmate child work
+#   checks, and discards secondmate child work
 #   for kind=secondmate. Only use it when the captain has explicitly said to
 #   discard the work.
 #   --legacy-record accepts a task record that predates the spawn_gen field:
@@ -3231,25 +3224,6 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
     echo "Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown." >&2
     exit 1
-  fi
-fi
-
-# Report-bearing ships opt in through metadata; prose is not a declaration.
-if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ]; then
-  DECLARED_REPORT=$(fm_meta_get "$META" report)
-  if [ -n "$DECLARED_REPORT" ]; then
-    REPORT="$DATA/$ID/report.md"
-    case "$DECLARED_REPORT" in
-      "data/$ID/report.md"|"$REPORT") ;;
-      *)
-        echo "REFUSED: ship task $ID declares a noncanonical report: $DECLARED_REPORT (expected $REPORT)." >&2
-        exit 1 ;;
-    esac
-    if [ ! -f "$REPORT" ] || [ -L "$REPORT" ]; then
-      echo "REFUSED: ship task $ID has no regular canonical report at $REPORT." >&2
-      echo "Have the crewmate write it there, or use --force after explicit discard approval." >&2
-      exit 1
-    fi
   fi
 fi
 

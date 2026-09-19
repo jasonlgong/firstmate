@@ -3555,6 +3555,13 @@ outcome: passed-with-skips"
   assert_contains "$out" 'CI skipped' 'terminal skipped CI remains explicit'
   assert_not_contains "$out" 'checks green' 'terminal skip is not green'
 
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/handoff-evidence)
+outcome: passed-with-override"
+  out=$(run_crew_state "$d" handoff-evidence)
+  assert_contains "$out" 'state: done' 'terminal override is a completed checkpoint'
+  assert_contains "$out" 'CI not green/unverified' 'terminal override keeps CI evidence non-green'
+  assert_not_contains "$out" 'state: unknown' 'supported terminal override is not unknown'
+
   FM_FAKE_AXI_STATUS="$(run_parked fm/handoff-evidence)
 outcome: checks-passed"
   out=$(run_crew_state "$d" handoff-evidence)

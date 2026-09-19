@@ -3666,48 +3666,6 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
-# An explicitly declared report must survive independently of the worktree.
-test_declared_ship_report_gate() {
-  local variant c rc expected
-  for variant in absent checkpoint canonical relative symlink wrong-path undeclared scout; do
-    c=$(make_case "report-$variant")
-    write_meta "$c" local-only ship
-    expected=1
-    case "$variant" in
-      undeclared) expected=0 ;;
-      scout) write_meta "$c" local-only scout ;;
-      relative) printf 'report=data/task-x1/report.md\n' >> "$c/state/task-x1.meta" ;;
-      wrong-path) printf 'report=%s/wt/report.md\n' "$c" >> "$c/state/task-x1.meta" ;;
-      *) printf 'report=%s/data/task-x1/report.md\n' "$c" >> "$c/state/task-x1.meta" ;;
-    esac
-    mkdir -p "$c/data/task-x1"
-    case "$variant" in
-      checkpoint|symlink|wrong-path)
-        printf 'findings\n' > "$c/wt/report.md"
-        git -C "$c/wt" add report.md
-        git -C "$c/wt" commit -qm report
-        add_fork_with_pushed_branch "$c"
-        [ "$variant" != symlink ] || ln -s "$c/wt/report.md" "$c/data/task-x1/report.md"
-        ;;
-      canonical|relative) printf 'findings\n' > "$c/data/task-x1/report.md"; expected=0 ;;
-    esac
-    printf 'done: report at %s/data/task-x1/report.md\n' "$c" > "$c/state/task-x1.status"
-    run_teardown "$c" > "$c/out" 2>&1; rc=$?
-    expect_code "$expected" "$rc" "report-$variant: retirement result"
-    if [ "$expected" = 1 ]; then
-      assert_grep 'REFUSED:' "$c/out" "report-$variant: report refusal must be explicit"
-      assert_present "$c/state/task-x1.meta" "report-$variant: preserve metadata"
-      assert_present "$c/state/task-x1.status" "report-$variant: preserve status"
-      assert_present "$c/wt" "report-$variant: preserve worktree"
-    else
-      [ ! -f "$c/state/task-x1.meta" ] || fail "report-$variant: teardown left metadata"
-    fi
-  done
-  pass "declared ship reports require a canonical regular file; undeclared ships and scout gate unchanged"
-}
-
-test_declared_ship_report_gate
-
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator

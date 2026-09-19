@@ -304,6 +304,5 @@ Include the commit SHA, tests run and their result (or not-run), publication URL
 Report CI as green only with passing checks for that published head; use pending, failed, skipped, approval-gated, not-run, not-configured, or unknown as the evidence warrants.
 A successful local test, a published PR, a skipped CI step, an approval gate, and a no-checks declaration never count as green-CI.
 When the pipeline returns with skips or without configured checks, report that explicit state instead of the green-CI completion line.
-If a canonical report is part of the assignment, write it at the assigned path and verify it exists there before advertising it; a worktree checkpoint is not that deliverable.
 EOF
 }
