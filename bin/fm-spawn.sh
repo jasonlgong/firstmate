@@ -3818,11 +3818,11 @@ if [ "$KIND" != secondmate ]; then
   # Shell quoting alone does not preserve quotes or backslashes in source.
   case "$HARNESS" in
   opencode* | pi | pi-signed | omp)
-    j_busy_event=$(node -p 'JSON.stringify(process.argv[1])' -- "$FM_ROOT/bin/fm-busy-event.sh") || exit 1
-    j_state=$(node -p 'JSON.stringify(process.argv[1])' -- "$STATE_REAL") || exit 1
-    j_id=$(node -p 'JSON.stringify(process.argv[1])' -- "$ID") || exit 1
-    j_busy_gen=$(node -p 'JSON.stringify(process.argv[1])' -- "$BUSY_GEN") || exit 1
-    j_turnend=$(node -p 'JSON.stringify(process.argv[1])' -- "$TURNEND") || exit 1
+    j_busy_event=$(printf '"%s"' "$(json_escape "$FM_ROOT/bin/fm-busy-event.sh")")
+    j_state=$(printf '"%s"' "$(json_escape "$STATE_REAL")")
+    j_id=$(printf '"%s"' "$(json_escape "$ID")")
+    j_busy_gen=$(printf '"%s"' "$(json_escape "$BUSY_GEN")")
+    j_turnend=$(printf '"%s"' "$(json_escape "$TURNEND")")
     ;;
   esac
   case "$HARNESS" in
