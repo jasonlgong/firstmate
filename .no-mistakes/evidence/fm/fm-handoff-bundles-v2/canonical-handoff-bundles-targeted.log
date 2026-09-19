@@ -1,0 +1,8 @@
+Targeted live validation for canonical handoff bundles
+
+=== tests/fm-brief.test.sh ===
+=== tests/fm-crew-state.test.sh ===
+ok - committed, skipped, approval-gated, and no-checks handoffs do not read as CI green
+all fm-crew-state tests passed
+=== tests/fm-inactive-reconcile.test.sh ===
+ok - published and green-CI handoffs retain their PR
