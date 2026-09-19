@@ -82,7 +82,8 @@
 # untracked subset of a slot whose scratch also holds clean tracked content.
 # Recovery must be outside the slot on the same filesystem; failure refuses.
 # Recovery is durable and never automatically purged. Ship dirty-work gates
-# remain unchanged. Slots with no scratch impose no additional Git requirement.
+# remain unchanged. Non-Git slots remain no-ops; Git worktrees inspect both
+# scratch paths even when absent so tracked deletions still refuse teardown.
 # Before destructive cleanup, teardown validates task check artifacts as
 # ordinary single-link files on the state device. It refuses and preserves
 # task state when that proof fails; otherwise it removes the task's check,
@@ -1724,9 +1725,7 @@ teardown_treehouse_return() {
 # Inspect before destructive cleanup, then inspect again after process reaping.
 # Nonempty untracked scratch is retained, never classified disposable by name.
 teardown_task_scratch() {  # <check|retain>
-  # No scratch means no new Git requirement (including non-Git endpoint fixtures).
-  if [ ! -e "$WT/scratch" ] && [ ! -L "$WT/scratch" ] \
-      && [ ! -e "$WT/.scratch" ] && [ ! -L "$WT/.scratch" ]; then
+  if [ ! -e "$WT/.git" ] && [ ! -L "$WT/.git" ]; then
     return 0
   fi
   python3 - "$WT" "$DATA/$ID" "$1" <<'PY'
@@ -1807,15 +1806,18 @@ try:
     top = os.fsdecode(git("rev-parse", "--show-toplevel")).rstrip("\n")
     if os.path.realpath(top) != wt:
         refuse("scratch is not in the recorded Git worktree")
-    paths = [name for name in ("scratch", ".scratch") if os.path.lexists(os.path.join(wt, name))]
+    paths = ["scratch", ".scratch"]
     candidates = []  # wholly untracked scratch paths: move the whole path
     mixed = []       # tracked + untracked/ignored: move only the untracked subset
     for name in paths:
         path = os.path.join(wt, name)
-        inspect(path)
+        if os.path.lexists(path):
+            inspect(path)
         # Preserve staged and unstaged work, even in a completed scout.
         if tracked_scratch_changes(name):
             refuse("tracked scratch changes in " + repr(path))
+        if not os.path.lexists(path):
+            continue
         tracked = git("ls-files", "-z", "--", name)
         if tracked:
             subset = untracked_subset(name)

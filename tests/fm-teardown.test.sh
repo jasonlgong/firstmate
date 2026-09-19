@@ -3887,6 +3887,30 @@ SH
   pass 'scratch: broken HEAD with tracked changes refuses teardown and preserves the slot'
 )
 
+test_scratch_tracked_deletion_refuses_return() (
+  set -eu
+  local case_dir rc
+  case_dir=$(make_case scratch-tracked-deletion)
+  prepare_scratch_case "$case_dir" scout
+  mkdir -p "$case_dir/wt/scratch"
+  printf 'committed scratch\n' > "$case_dir/wt/scratch/tracked"
+  git -C "$case_dir/wt" add scratch/tracked
+  git -C "$case_dir/wt" commit -qm 'tracked scratch'
+  rm -f "$case_dir/wt/scratch/tracked"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+touch "$case_dir/returned"
+SH
+  rc=0
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/out" 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" 'tracked scratch deletion accepted'
+  assert_absent "$case_dir/wt/scratch/tracked" 'tracked scratch deletion was reverted'
+  assert_present "$case_dir/state/task-x1.meta" 'tracked scratch deletion lost task record'
+  assert_absent "$case_dir/returned" 'tracked scratch deletion reached Treehouse return'
+  assert_grep 'REFUSED: scratch preservation' "$case_dir/out" 'tracked scratch deletion refusal missing'
+  pass 'scratch: tracked deletion refuses teardown and preserves the task record'
+)
+
 test_scratch_real_pool_releases_retained_slot() (
   set -eu
   local real_treehouse case_dir wt again archive
@@ -3955,6 +3979,7 @@ test_scratch_tracked_and_recovery_boundaries
 test_scratch_mixed_tracked_relocates_untracked_subset
 test_scratch_unborn_head_moves_untracked
 test_scratch_broken_head_refuses_tracked_changes
+test_scratch_tracked_deletion_refuses_return
 test_scratch_real_pool_releases_retained_slot
 test_scratch_failed_return_keeps_recovery
 
