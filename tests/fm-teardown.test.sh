@@ -3766,7 +3766,7 @@ SH
 test_scratch_tracked_and_recovery_boundaries() (
   set -eu
   local case_dir mode rc
-  for mode in dirty staged mixed symlink-destination; do
+  for mode in dirty staged symlink-destination; do
     case_dir=$(make_case "scratch-boundary-$mode")
     prepare_scratch_case "$case_dir" scout
     mkdir -p "$case_dir/wt/scratch"
@@ -3795,7 +3795,69 @@ test_scratch_tracked_and_recovery_boundaries() (
     fi
     assert_grep 'REFUSED: scratch preservation' "$case_dir/out" "$mode missing refusal"
   done
-  pass 'scratch: tracked edits, mixed contents, and symlink recovery destinations refuse without loss'
+  pass 'scratch: tracked edits and symlink recovery destinations refuse without loss'
+)
+
+# Over-trigger polish (a): a slot whose scratch holds a committed placeholder plus
+# untracked worker output must relocate only the untracked subset and re-lease,
+# never refuse the whole slot. Fails before the polish (refuses as "mixed").
+test_scratch_mixed_tracked_relocates_untracked_subset() (
+  set -eu
+  local case_dir archive
+  case_dir=$(make_case scratch-mixed-tracked)
+  prepare_scratch_case "$case_dir" scout
+  mkdir -p "$case_dir/wt/scratch"
+  printf 'placeholder\n' > "$case_dir/wt/scratch/.gitkeep"
+  git -C "$case_dir/wt" add scratch/.gitkeep
+  git -C "$case_dir/wt" commit -qm 'scratch placeholder'
+  printf 'unique worker output\n' > "$case_dir/wt/scratch/output"
+  printf 'scratch/ignored\n' >> "$case_dir/project/.git/info/exclude"
+  printf 'ignored artifact\n' > "$case_dir/wt/scratch/ignored"
+  # The slot is unclogged only if the untracked subset is gone while the tracked
+  # placeholder stays for Treehouse to reset; the fake return proves both.
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+[ ! -e "$case_dir/wt/scratch/output" ] && [ ! -e "$case_dir/wt/scratch/ignored" ] \
+  && [ -f "$case_dir/wt/scratch/.gitkeep" ] || exit 19
+SH
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/out" 2>&1 \
+    || fail "mixed teardown refused instead of relocating the untracked subset: $(cat "$case_dir/out")"
+  assert_present "$case_dir/wt/scratch/.gitkeep" 'tracked placeholder removed from slot'
+  assert_equals 'placeholder' "$(cat "$case_dir/wt/scratch/.gitkeep")" 'tracked placeholder changed'
+  archive=$(find "$case_dir/data/task-x1" -type d -name 'scratch-recovery-*')
+  [ -n "$archive" ] || fail 'no durable scratch recovery directory'
+  assert_equals 'unique worker output' "$(cat "$archive/scratch/output")" 'untracked output not relocated'
+  assert_equals 'ignored artifact' "$(cat "$archive/scratch/ignored")" 'ignored artifact not relocated'
+  assert_absent "$archive/scratch/.gitkeep" 'tracked placeholder wrongly relocated'
+  pass 'scratch: mixed tracked placeholder relocates only the untracked subset and leaves tracked work'
+)
+
+# Over-trigger polish (b): an unborn HEAD (a repo with zero commits) plus only
+# untracked scratch must take the ordinary move path, not read the unborn-HEAD
+# `git diff HEAD` error as tracked changes. Fails before the polish (refuses).
+test_scratch_unborn_head_moves_untracked() (
+  set -eu
+  local case_dir archive
+  case_dir=$(make_case scratch-unborn-head)
+  prepare_scratch_case "$case_dir" scout
+  # Rebuild the slot as a git repository with no commits (unborn HEAD).
+  rm -rf "$case_dir/wt/.git"
+  git -C "$case_dir/wt" init -q
+  mkdir -p "$case_dir/wt/scratch" "$case_dir/wt/.scratch"
+  printf 'unborn ordinary\n' > "$case_dir/wt/scratch/file"
+  printf '.scratch/\n' >> "$case_dir/wt/.git/info/exclude"
+  printf 'unborn ignored\n' > "$case_dir/wt/.scratch/file"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+[ ! -e "$case_dir/wt/scratch" ] && [ ! -e "$case_dir/wt/.scratch" ] || exit 19
+SH
+  FM_HOME="$case_dir" run_teardown "$case_dir" > "$case_dir/out" 2>&1 \
+    || fail "unborn-HEAD teardown refused instead of moving untracked scratch: $(cat "$case_dir/out")"
+  archive=$(find "$case_dir/data/task-x1" -type d -name 'scratch-recovery-*')
+  [ -n "$archive" ] || fail 'unborn-HEAD scratch was not retained'
+  assert_equals 'unborn ordinary' "$(cat "$archive/scratch/file")" 'unborn-HEAD ordinary scratch lost'
+  assert_equals 'unborn ignored' "$(cat "$archive/.scratch/file")" 'unborn-HEAD ignored scratch lost'
+  pass 'scratch: unborn-HEAD slot with only untracked scratch takes the ordinary move path'
 )
 
 test_scratch_real_pool_releases_retained_slot() (
@@ -3863,6 +3925,8 @@ set -e
 test_scratch_repository_data_refuses_return
 test_scratch_retained_before_pool_return
 test_scratch_tracked_and_recovery_boundaries
+test_scratch_mixed_tracked_relocates_untracked_subset
+test_scratch_unborn_head_moves_untracked
 test_scratch_real_pool_releases_retained_slot
 test_scratch_failed_return_keeps_recovery
 
