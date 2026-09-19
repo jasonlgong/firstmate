@@ -355,10 +355,10 @@ test_pr_field_accepts_published_and_green_ci_lines() {
     mv "$MATE/state/$id.meta.tmp" "$MATE/state/$id.meta"
   done
   FM_FAKE_CREW_STATE='unknown' run_reconcile "$MATE"
-  key=$(reported_outcome_key "$MATE" published done) || fail "published receipt key missing"
+  key=$(reported_outcome_key "$MATE" published 'done') || fail "published receipt key missing"
   grep -Fxq "done [key=$key]: child published done: published; PR https://example.test/owner/repo/pull/66 pr=https://example.test/owner/repo/pull/66 mode=no-mistakes yolo=off" \
     "$MAIN/state/mate.status" || fail "published handoff lost its PR: $(cat "$MAIN/state/mate.status")"
-  key=$(reported_outcome_key "$MATE" green-ci done) || fail "green-CI receipt key missing"
+  key=$(reported_outcome_key "$MATE" green-ci 'done') || fail "green-CI receipt key missing"
   grep -Fxq "done [key=$key]: child green-ci done: green-CI; PR https://example.test/owner/repo/pull/77 checks green pr=https://example.test/owner/repo/pull/77 mode=no-mistakes yolo=off" \
     "$MAIN/state/mate.status" || fail "green-CI handoff lost its PR: $(cat "$MAIN/state/mate.status")"
   pass "published and green-CI handoffs retain their PR"
