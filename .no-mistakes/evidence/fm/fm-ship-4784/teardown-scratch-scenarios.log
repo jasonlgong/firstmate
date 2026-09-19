@@ -1,0 +1,8 @@
+bash: test_scratch_repository_data_refuses_return: command not found
+bash: test_scratch_retained_before_pool_return: command not found
+bash: test_scratch_tracked_and_recovery_boundaries: command not found
+bash: test_scratch_mixed_tracked_relocates_untracked_subset: command not found
+bash: test_scratch_unborn_head_moves_untracked: command not found
+bash: test_scratch_broken_head_refuses_tracked_changes: command not found
+bash: test_scratch_tracked_deletion_refuses_return: command not found
+bash: test_scratch_failed_return_keeps_recovery: command not found
