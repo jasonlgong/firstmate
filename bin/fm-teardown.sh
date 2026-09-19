@@ -1768,12 +1768,18 @@ def tracked_scratch_changes(name):
                            stderr=subprocess.DEVNULL)
     if code in (0, 1):
         return code == 1
-    # HEAD is unborn (no commits) or otherwise unresolvable, so a diff against
-    # HEAD is impossible; only staged content can be at risk. Compare the index
-    # to the empty tree so staged scratch changes are still preserved, while an
-    # unborn HEAD with only untracked scratch takes the ordinary move path.
-    return subprocess.call(["git", "-C", wt, "diff", "--cached", "--quiet", "--", name],
-                           stderr=subprocess.DEVNULL) != 0
+    symbolic = subprocess.run(["git", "-C", wt, "symbolic-ref", "-q", "HEAD"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              check=False)
+    if symbolic.returncode != 0:
+        raise RuntimeError("cannot resolve HEAD while inspecting tracked scratch")
+    ref = os.fsdecode(symbolic.stdout).rstrip("\n")
+    ref_exists = subprocess.call(["git", "-C", wt, "show-ref", "--verify", "--quiet", ref],
+                                 stderr=subprocess.DEVNULL)
+    if ref_exists == 1:
+        return subprocess.call(["git", "-C", wt, "diff", "--cached", "--quiet", "--", name],
+                               stderr=subprocess.DEVNULL) != 0
+    raise RuntimeError("cannot resolve HEAD while inspecting tracked scratch")
 
 def untracked_subset(name):
     # Untracked and ignored files under a scratch path that also holds clean
