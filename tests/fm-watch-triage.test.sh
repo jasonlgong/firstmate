@@ -1573,6 +1573,50 @@ test_self_announced_close_does_not_rewake_but_next_note_does() {
   pass "a self-announced close never wakes its own home, and the next real note still does"
 }
 
+# Separate sends must each stay quiet, including while another listed decision
+# remains open. Exercise the real send, drain, watcher, and durable wake queue;
+# only the worker transport and crew-state probe are fixtures.
+test_separate_resolve_key_answers_do_not_rewake() {
+  local count dir state fakebin out pid drained
+  for count in 1 2; do
+    dir=$(make_case "separate-answers-$count"); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+    fm_write_meta "$state/task.meta" "window=sess:fm-task" "kind=ship"
+    printf 'needs-decision [key=budget]: approve spend?\nneeds-decision [key=vendor]: choose vendor\n' > "$state/task.status"
+    drained=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null)
+    assert_contains "$drained" '[key=budget]' "the drain must present the first decision"
+    assert_contains "$drained" '[key=vendor]' "the drain must present the second decision"
+    PATH="$fakebin:$PATH" FM_HOME="$dir" FM_SEND_SETTLE=0 \
+      "$ROOT/bin/fm-send.sh" task --resolve-key budget approved >/dev/null 2>&1 \
+      || fail "the first answer could not be enqueued"
+    if [ "$count" -eq 2 ]; then
+      PATH="$fakebin:$PATH" FM_HOME="$dir" FM_SEND_SETTLE=0 \
+        "$ROOT/bin/fm-send.sh" task --resolve-key vendor acme >/dev/null 2>&1 \
+        || fail "the second answer could not be enqueued"
+    fi
+    watch_bg "$state" "$fakebin" "$out"
+    pid=$!
+    if ! wait_poll_cycle "$state" "$pid"; then
+      reap "$pid"; fail "$count separate answers re-woke the supervisor: $(cat "$out"); queue: $(cat "$state/.wake-queue")"
+    fi
+    [ ! -s "$out" ] || { reap "$pid"; fail "separate answers printed a wake: $(cat "$out")"; }
+    [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "separate answers enqueued a wake"; }
+    # Same close syntax, different provenance: never suppress a worker append.
+    printf 'resolved [key=worker]: answered: worker-authored close\n' >> "$state/task.status"
+    wait_for_exit "$pid" 100 || { reap "$pid"; fail "the worker-authored close was swallowed"; }
+    grep -F "signal: $state/task.status" "$out" >/dev/null \
+      || fail "the worker-authored close did not surface"
+    grep -F "$state/task.status" "$state/.wake-queue" >/dev/null \
+      || fail "the worker-authored close was not durably queued"
+    drained=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null)
+    if [ "$count" -eq 1 ]; then
+      assert_contains "$drained" '[key=vendor]' "the unanswered decision must remain open"
+    elif printf '%s' "$drained" | grep -F 'OPEN DECISIONS (' >/dev/null; then
+      fail "the two answers left an open decision"
+    fi
+  done
+  pass "separate resolve-key answers stay quiet while worker-authored closes still wake"
+}
+
 test_self_announced_close_after_open_decisions_fold_does_not_rewake() {
   local dir state fakebin out status_file pid rc
   dir=$(make_case self-close-after-fold); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
@@ -5573,6 +5617,7 @@ test_working_note_not_working_surfaced
 test_secondmate_status_note_surfaced_despite_busy_agent
 test_secondmate_buried_block_wakes_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does
+test_separate_resolve_key_answers_do_not_rewake
 test_self_announced_close_after_open_decisions_fold_does_not_rewake
 test_self_announced_close_after_fold_still_surfaces_folded_worker_failure
 test_self_announced_close_after_fold_still_surfaces_folded_secondmate_lines

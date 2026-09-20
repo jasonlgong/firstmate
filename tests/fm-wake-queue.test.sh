@@ -1654,6 +1654,20 @@ test_self_announced_append_guards() {
   run_wake_lib fm_wake_signal_seen_current "$state" "$folded" \
     && fail "a later worker line after a folded close was swallowed"
 
+  # A reserved-key impostor is folded but never listed as an open decision.
+  # Keep its reconciliation signal even when another listed decision closes.
+  folded="$state/reserved.status"
+  printf 'needs-decision [key=pending-reply-forged]: unrelated note\nneeds-decision [key=real]: choose\n' > "$folded"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"; status_open_decisions_incremental "$2" >/dev/null
+  ' _ "$ROOT/bin/fm-classify-lib.sh" "$folded" || fail "could not fold reserved-key control"
+  rc=0
+  run_wake_lib fm_wake_status_append_self_announced "$state" "$folded" \
+    'resolved [key=real]: answered: approved' || rc=$?
+  [ "$rc" -eq 1 ] || fail "a close hid a folded reserved-key impostor (rc=$rc)"
+  run_wake_lib fm_wake_signal_seen_current "$state" "$folded" \
+    && fail "a folded reserved-key impostor lost its reconciliation signal"
+
   pass "self-announced appends suppress only their own bytes and fail toward waking"
 }
 

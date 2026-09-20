@@ -2168,9 +2168,9 @@ fm_wake_status_mark_current() {  # <state> <status-file>
 #   - the marker advances only when this home already read every pre-append
 #     byte, the post-append size equals that size plus exactly the appended
 #     bytes (no foreign write interleaved), AND the watcher's own span
-#     classifier finds no actionable event from its classified offset through
-#     the post-append end (classifying after the append keeps the just-closed
-#     decisions from counting as live);
+#     classifier finds no actionable event in the newly appended span. Earlier
+#     keyed decisions proven read below may remain open: reclassifying them
+#     would prevent recording this answer and make each separate answer wake;
 #   - "already read" means the watcher's classified seen offset equals the
 #     pre-append size, or the OPEN DECISIONS fold cursor does and every
 #     non-blank line the watcher has not classified yet is a keyed
@@ -2188,7 +2188,7 @@ fm_wake_status_mark_current() {  # <state> <status-file>
 # Returns 0 appended and self-announced, 1 appended but left for the watcher
 # (the safe direction), 2 the append itself failed.
 fm_wake_status_append_self_announced() {  # <state> <status-file> <line>...
-  local state=$1 file=$2 line appended=0 pre_size='' pre_ident='' post_size post_ident classified folded lag span_rc=0
+  local state=$1 file=$2 line appended=0 pre_size='' pre_ident='' post_size post_ident classified folded lag key span_rc=0
   local LC_ALL=C
   shift 2
   _fm_wake_require_classify || return 1
@@ -2215,12 +2215,16 @@ fm_wake_status_append_self_announced() {  # <state> <status-file> <line>...
         *) return 1 ;;
       esac
       _fm_key_before_colon "$line" || _fm_key_at_note_head "$line" >/dev/null || return 1
-      _fm_decision_key "$line" >/dev/null || return 1
+      key=$(_fm_decision_key "$line") || return 1
+      _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || return 1
     done <<EOF
 $lag
 EOF
   fi
-  status_span_first_actionable_record "$file" "$classified" >/dev/null || span_rc=$?
+  # The prefix is already owned by the seen marker or the restricted fold
+  # proof above. Classify only this append, then durably cover it with the
+  # existing marker so the next answer does not encounter an unowned close.
+  status_span_first_actionable_record "$file" "$pre_size" >/dev/null || span_rc=$?
   [ "$span_rc" -eq 1 ] || return 1
   fm_wake_status_seen_commit "$state" "$file" "$post_size" "$post_ident" || return 1
   return 0
