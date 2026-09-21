@@ -1335,6 +1335,8 @@ status_retire_presentation_task() {  # <state> <task-id>
   if [ ! -e "$state/$task.status" ] && [ ! -L "$state/$task.status" ] \
     && [ ! -e "$state/.$task.open-decisions-cursor" ] \
     && [ ! -L "$state/.$task.open-decisions-cursor" ] \
+    && [ ! -e "$state/.$task.open-decisions-presented" ] \
+    && [ ! -L "$state/.$task.open-decisions-presented" ] \
     && [ ! -e "$signal_marker" ] && [ ! -L "$signal_marker" ] \
     && [ ! -e "$heartbeat_marker" ] && [ ! -L "$heartbeat_marker" ] \
     && [ ! -e "$daemon_marker" ] && [ ! -L "$daemon_marker" ]; then
@@ -1384,6 +1386,7 @@ EOF
   fi
   if [ "$rc" -eq 0 ]; then
     rm -f -- "$state/$task.status" "$state/.$task.open-decisions-cursor" \
+      "$state/.$task.open-decisions-presented" \
       "$signal_marker" "$heartbeat_marker" "$daemon_marker" || rc=1
   fi
   fm_lock_release "$lock" || rc=1
@@ -1472,6 +1475,52 @@ EOF
   done <<EOF
 $snapshot
 EOF
+}
+
+# Presentation receipts are separate from the fold cursor: folding reads even
+# decisions omitted by the drain's byte cap. After stdout succeeds, the drain
+# records only shown decisions in .<task>.open-decisions-presented, atomically
+# per task under its presentation lock. The header binds the fold version/kind,
+# captured endpoint, and file identity; remaining rows are key/verb/full-note
+# triples for displayed entries (whose note may have been visually truncated).
+# Self-announcement may use a receipt only at that exact prefix and only for
+# matching decisions. Missing, stale, or unreadable receipts never prove coverage.
+# Teardown retires these receipts with the status file.
+status_commit_open_decisions_presented() {  # <state> <snapshot> <shown-task/key/verb/note-rows>
+  local state=$1 snapshot=$2 shown=$3 task endpoint ident receipt tmp row_task record
+  while IFS=$(printf '\t') read -r task endpoint ident; do
+    [ -n "$task" ] || continue
+    receipt="$state/.$task.open-decisions-presented"
+    tmp=$(mktemp "$receipt.XXXXXX") || return 1
+    if ! {
+      printf 'v1:%s:%s\t%s\t%s\n' "$FM_OPEN_DECISIONS_FOLD_VERSION" \
+        "$(_fm_status_kind "$state/$task.status")" "$endpoint" "$ident" \
+        && while IFS=$(printf '\t') read -r row_task record; do
+          [ "$row_task" != "$task" ] || printf '%s\n' "$record" || return 1
+        done <<EOF
+$shown
+EOF
+    } > "$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+    mv -f "$tmp" "$receipt" || { rm -f "$tmp"; return 1; }
+  done <<EOF
+$snapshot
+EOF
+}
+
+status_open_decisions_presented_set() {  # <status-file> <prefix-endpoint> <identity>
+  local f=$1 endpoint=$2 ident=$3 receipt data header expected
+  receipt="${f%/*}/.${f##*/}"
+  receipt="${receipt%.status}.open-decisions-presented"
+  [ -f "$receipt" ] && [ -r "$receipt" ] && [ ! -L "$receipt" ] || return 1
+  data=$(LC_ALL=C command cat "$receipt" 2>/dev/null) || return 1
+  header=${data%%$'\n'*}
+  expected=$(printf 'v1:%s:%s\t%s\t%s' "$FM_OPEN_DECISIONS_FOLD_VERSION" \
+    "$(_fm_status_kind "$f")" "$endpoint" "$ident") || return 1
+  [ "$header" = "$expected" ] || return 1
+  case "$data" in *$'\n'*) printf '%s' "${data#*$'\n'}" ;; *) return 1 ;; esac
 }
 
 # --- unread status lines since the presentation cursor ----------------------

@@ -2174,9 +2174,10 @@ fm_wake_status_mark_current() {  # <state> <status-file>
 #   - "already read" means the watcher's classified seen offset equals the
 #     pre-append size, or the OPEN DECISIONS fold cursor does and every
 #     non-blank line the watcher has not classified yet is a keyed
-#     needs-decision or blocked line, which OPEN DECISIONS listed as open. The
-#     fold reads bytes it never prints, so a worker's `failed:`, `paused:`,
-#     `working:`, `resolved` or verb-less line there must still wake, and so
+#     needs-decision or blocked line matching the presentation receipt owned
+#     by fm-classify-lib.sh. A fold alone never proves presentation: decisions
+#     omitted by the output cap must still wake. A worker's `failed:`, `paused:`,
+#     `working:`, `resolved` or verb-less line must still wake, and so
 #     must a captain-held line, which raises the watcher's needs-decision
 #     side-band;
 #   - on ANY other condition - a missing file, pending foreign bytes, an
@@ -2189,6 +2190,7 @@ fm_wake_status_mark_current() {  # <state> <status-file>
 # (the safe direction), 2 the append itself failed.
 fm_wake_status_append_self_announced() {  # <state> <status-file> <line>...
   local state=$1 file=$2 line appended=0 pre_size='' pre_ident='' post_size post_ident classified folded lag key span_rc=0
+  local presented record
   local LC_ALL=C
   shift 2
   _fm_wake_require_classify || return 1
@@ -2207,6 +2209,7 @@ fm_wake_status_append_self_announced() {  # <state> <status-file> <line>...
   if [ "$classified" != "$pre_size" ]; then
     folded=$(status_open_decisions_cursor_offset "$file") || folded=0
     [ "$folded" = "$pre_size" ] && [ "$classified" -lt "$pre_size" ] || return 1
+    presented=$(status_open_decisions_presented_set "$file" "$pre_size" "$pre_ident") || return 1
     lag=$(_fm_status_read_span "$file" "$classified" "$((pre_size - classified))") || return 1
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in *[![:space:]]*) ;; *) continue ;; esac
@@ -2217,6 +2220,8 @@ fm_wake_status_append_self_announced() {  # <state> <status-file> <line>...
       _fm_key_before_colon "$line" || _fm_key_at_note_head "$line" >/dev/null || return 1
       key=$(_fm_decision_key "$line") || return 1
       _fm_decision_key_transition_allowed "$key" "$(status_line_note "$line")" || return 1
+      record="$key"$'\t'"$(status_line_verb "$line")"$'\t'"$(status_line_note "$line")"
+      case $'\n'"$presented"$'\n' in *$'\n'"$record"$'\n'*) ;; *) return 1 ;; esac
     done <<EOF
 $lag
 EOF

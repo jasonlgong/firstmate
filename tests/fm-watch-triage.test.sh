@@ -1617,19 +1617,45 @@ test_separate_resolve_key_answers_do_not_rewake() {
   pass "separate resolve-key answers stay quiet while worker-authored closes still wake"
 }
 
+# A fold reads every decision even when the presentation cap omits some. A
+# shown answer must not acknowledge that entire unread prefix to the watcher.
+test_resolve_key_after_capped_open_decisions_still_wakes() {
+  local dir state fakebin out drained pid i note
+  dir=$(make_case capped-answers); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  fm_write_meta "$state/task.meta" "window=sess:fm-task" "kind=ship"
+  note=$(printf '%0300d' 0)
+  for i in $(seq 1 25); do
+    printf 'needs-decision [key=k%02d]: %s\n' "$i" "$note" >> "$state/task.status"
+  done
+  drained=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null)
+  assert_contains "$drained" 'task [key=k01]' "the answered decision must have been presented"
+  assert_contains "$drained" 'OPEN DECISIONS: 7 more omitted (byte cap)' "the drain must omit decisions"
+  if printf '%s' "$drained" | grep -F 'task [key=k25]' >/dev/null; then
+    fail "the capped decision was unexpectedly presented"
+  fi
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_SEND_SETTLE=0 \
+    "$ROOT/bin/fm-send.sh" task --resolve-key k01 approved >/dev/null 2>&1 \
+    || fail "the shown answer could not be enqueued"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "answering a shown decision swallowed the omitted decisions' wake"; }
+  grep -F "signal: $state/task.status" "$out" >/dev/null \
+    || fail "the omitted decisions did not surface"
+  grep -F "$state/task.status" "$state/.wake-queue" >/dev/null \
+    || fail "the omitted decisions were not durably queued"
+  pass "answering a shown decision preserves the wake for decisions omitted by the byte cap"
+}
+
 test_self_announced_close_after_open_decisions_fold_does_not_rewake() {
   local dir state fakebin out status_file pid rc
   dir=$(make_case self-close-after-fold); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
   status_file="$state/task.status"
   printf 'needs-decision [key=k1]: pick one\n' > "$status_file"
-  # Session-start drain folds OPEN DECISIONS without writing a watcher seen
+  # Session-start drain presents OPEN DECISIONS without writing a watcher seen
   # marker. That is the issue 4767 path: the supervisor then closes the listed
   # decision and must not get a signal wake of its own resolved line.
-  FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    status_open_decisions_incremental "$2" >/dev/null
-  ' _ "$ROOT/bin/fm-classify-lib.sh" "$status_file" \
-    || fail "could not fold the open decision"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 \
+    || fail "could not present the open decision"
   rc=0
   FM_STATE_OVERRIDE="$state" bash -c '
     . "$1"
@@ -5618,6 +5644,7 @@ test_secondmate_status_note_surfaced_despite_busy_agent
 test_secondmate_buried_block_wakes_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does
 test_separate_resolve_key_answers_do_not_rewake
+test_resolve_key_after_capped_open_decisions_still_wakes
 test_self_announced_close_after_open_decisions_fold_does_not_rewake
 test_self_announced_close_after_fold_still_surfaces_folded_worker_failure
 test_self_announced_close_after_fold_still_surfaces_folded_secondmate_lines

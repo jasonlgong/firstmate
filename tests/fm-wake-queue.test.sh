@@ -1634,17 +1634,14 @@ test_self_announced_append_guards() {
   run_wake_lib fm_wake_signal_seen_current "$state" "$status" \
     || fail "multibyte byte accounting broke the self-announce guard"
 
-  # Issue 4767: a drain that folded OPEN DECISIONS has already presented those
+  # Issue 4767: a drain that printed OPEN DECISIONS has already presented those
   # bytes to this home even when the watcher has not written a matching seen
   # marker. The bookkeeping close must stay quiet; a later worker line must not.
   printf 'needs-decision [key=k3]: pick one\n' > "$folded"
   run_wake_lib fm_wake_signal_seen_current "$state" "$folded" \
     && fail "an unfolded file without a seen marker read as announced"
-  FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    status_open_decisions_incremental "$2" >/dev/null
-  ' _ "$ROOT/bin/fm-classify-lib.sh" "$folded" \
-    || fail "could not fold the open decision"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 \
+    || fail "could not present the open decision"
   run_wake_lib fm_wake_status_append_self_announced "$state" "$folded" \
     'resolved [key=k3]: answered: folded close' \
     || fail "a close after an OPEN DECISIONS fold was not self-announced (rc=$?)"

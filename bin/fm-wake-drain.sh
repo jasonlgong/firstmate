@@ -442,8 +442,9 @@ EOF
 # Bounded and silent: prints nothing when no decision is open, which is the
 # common case.
 print_open_decisions_section() {
-  local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
+  local snapshot=${1:-} open task key verb note line heading item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 bytes
+  OPEN_DECISIONS_PRESENTED=''
 
   if [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
@@ -456,7 +457,8 @@ print_open_decisions_section() {
     [ -n "$task" ] || continue
     line="$task"
     [ "$key" = default ] || line="$line [key=$key]"
-    line="$line $verb: $note"
+    heading="$line $verb:"
+    line="$heading $note"
     # The shared cut counts the item's own characters; the trailing newline this
     # section's global budget also pays for is this caller's, so the per-item
     # allowance passed down is one short of the cap.
@@ -471,6 +473,10 @@ print_open_decisions_section() {
 "
     used=$((used + bytes))
     shown=$((shown + 1))
+    # A truncated key is not a presented decision identity.
+    case "$line" in
+      "$heading"*) OPEN_DECISIONS_PRESENTED="$OPEN_DECISIONS_PRESENTED$task"$'\t'"$key"$'\t'"$verb"$'\t'"$note"$'\n' ;;
+    esac
   done <<EOF
 $open
 EOF
@@ -550,6 +556,7 @@ EOF
 
 print_status_sections() {
   local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared
+  local OPEN_DECISIONS_PRESENTED=''
   if [ -z "$snapshot" ]; then snapshot=$(status_presentation_snapshot "$STATE") || return 1; fi
   [ -n "$snapshot" ] || return 0
   acknowledged=$(status_acknowledge_presented_snapshot "$STATE" "$snapshot" "$fully_presented") || return 1
@@ -571,6 +578,10 @@ print_status_sections() {
     return 1
   fi
   if ! status_commit_presentation_snapshot "$STATE" "$acknowledged"; then
+    rm -f -- "$prepared"
+    return 1
+  fi
+  if ! status_commit_open_decisions_presented "$STATE" "$snapshot" "$OPEN_DECISIONS_PRESENTED"; then
     rm -f -- "$prepared"
     return 1
   fi
