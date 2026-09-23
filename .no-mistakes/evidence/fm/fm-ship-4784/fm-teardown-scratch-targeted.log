@@ -1,0 +1,13 @@
+ok - scratch: scout bare committed and uncommitted work preserved in place, return refused
+ok - scratch: scout nested committed and uncommitted work preserved in place, return refused
+ok - scratch: scout linked committed and uncommitted work preserved in place, return refused
+ok - scratch: ship bare committed and uncommitted work preserved in place, return refused
+ok - scratch: ship nested committed and uncommitted work preserved in place, return refused
+ok - scratch: ship linked committed and uncommitted work preserved in place, return refused
+ok - scratch: ordinary and ignored data retained before return, symlinks and unrelated work preserved
+ok - scratch: tracked edits and symlink recovery destinations refuse without loss
+ok - scratch: mixed tracked placeholder relocates only the untracked subset and leaves tracked work
+ok - scratch: unborn-HEAD slot with only untracked scratch takes the ordinary move path
+ok - scratch: broken HEAD with tracked changes refuses teardown and preserves the slot
+ok - scratch: tracked deletion refuses teardown and preserves the task record
+ok - scratch: empty directories reclaimed, failed return and retry preserve durable recovery
