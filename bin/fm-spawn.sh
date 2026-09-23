@@ -30,7 +30,8 @@
 #   secondmate's charter.
 #        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
-#   task's own recorded endpoint and worktree instead of creating either. It is
+#   task's own recorded worktree, reusing its recorded endpoint when that
+#   endpoint still exists, instead of creating either from scratch. It is
 #   the launch half of the control plane (bin/fm-control.sh relaunch), which
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
@@ -42,7 +43,20 @@
 #   ordinary relaunch. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux
 #   or herdr), and clears the previous harness's per-task wiring before arming
-#   the new incarnation. The replacement still never starts outside the copy
+#   the new incarnation. Two verdicts are agent-free: a `dead` endpoint is
+#   ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
+#   worktree and the republished record rebinds the task to it. That proof is
+#   its own step, because a backend's `missing` also covers an endpoint that is
+#   merely unreachable from here - and it is only available on HERDR, which must
+#   still read the recorded pane as gone once that session's server is running
+#   again. A tmux `missing` always refuses: a task record carries no socket
+#   identity for its endpoint, so no read here can tell a destroyed window from
+#   one on a tmux server this process cannot address. An endpoint that turns out
+#   to have survived refuses too. The worktree is reused untouched either way; a
+#   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
+#   secondmate whose endpoint is gone is respawned by its own owner
+#   (`--secondmate`, driven by the session-start liveness sweep).
+#   The replacement still never starts outside the copy
 #   holding the work: a Herdr shell that has drifted out of the recorded
 #   worktree is told once to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
@@ -61,12 +75,12 @@
 #   bin/fm-backend.sh's fm_backend_detect, with cmux fallback details in
 #   docs/cmux-backend.md),
 #   then tmux.
-#   Spawn-capable backends are the reference tmux adapter and experimental
-#   herdr, zellij, orca, and cmux. Orca owns both the task worktree and
-#   terminal, so ship/scout Orca spawns do not run treehouse get; cmux is a
-#   session provider only, exactly like herdr/zellij, so it does. An
-#   auto-detected herdr or cmux spawn prints a loud stderr notice;
-#   auto-detected tmux stays silent; zellij and orca are never auto-detected.
+#   Spawn-capable backends are the reference tmux adapter, verified herdr
+#   adapter, and experimental zellij, orca, and cmux adapters. Orca owns both
+#   the task worktree and terminal, so ship/scout Orca spawns do not run
+#   treehouse get; cmux is a session provider only, exactly like herdr/zellij,
+#   so it does. Auto-detected herdr stays silent like tmux; auto-detected cmux
+#   prints a loud stderr notice; zellij and orca are never auto-detected.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
 #   blocked backend contract. Default tmux spawns do not write backend= to meta;
 #   absent backend= means tmux. cmux does not support --secondmate spawns yet.
@@ -135,7 +149,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. For pi and pi-signed, fm-spawn resolves the selected executable
@@ -144,6 +158,13 @@
 #   a failed or inconclusive probe omits it so older Pi versions remain launchable.
 #   A missing selected executable refuses before endpoint creation, and pi-signed
 #   never falls back to pi.
+#   Devin is worker-only: --permission-mode dangerous and
+#   --respect-workspace-trust false allow unattended tools in a fresh worktree.
+#   --config points at a private per-task snapshot of the user config with
+#   lifecycle hooks appended; no global or project config is edited.
+#   config/claude-permission-mode is not mapped: Devin auto approves read-only
+#   tools, unlike Claude auto. Effort is part of Devin model ids, so the
+#   independent --effort axis is recorded but omitted from argv.
 #   For omp (Oh My Pi), fm-spawn resolves the `omp` executable from PATH once and
 #   refuses when it is absent. Every omp launch clears the foreign harness
 #   markers (omp publishes none of its own), sets the Firstmate-owned
@@ -228,6 +249,15 @@
 #   and scout batches. The loop lives here, in bash, so callers never hand-write a
 #   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted
 #   $vars and silently breaks ad-hoc `for ... in $pairs` loops).
+# Launch delivery:
+#   Every harness and backend receives its complete launch command from a
+#   never-reused 0600 file in a 0700 home-scoped task namespace under /tmp, while
+#   the pane receives only a short source line.
+#   This keeps commands beyond the terminal's roughly 1,024-byte input boundary
+#   intact, prevents a delayed source line from being rebound by a relaunch, and
+#   prevents equal task ids in different Firstmate homes from sharing a file.
+#   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
+#   task teardown removes only the current home's launch namespace.
 # Launch environment (config/launch-env-allowlist):
 #   Absent means unchanged ambient inheritance. A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
@@ -286,6 +316,8 @@
 #     __CURSORBIN__ resolved, cursor-verified executable for a cursor launch
 #     __GEMINISETTINGS__ firstmate-owned per-task gemini settings file (busy-state hooks)
 #     __ROVOBIN__   resolved, rovo-verified executable for a rovo launch
+#     __DEVINBIN__ resolved Devin executable
+#     __DEVINCONFIG__ private per-task Devin config with lifecycle hooks
 #     __AGYBIN__    resolved, agy-verified executable for an agy launch
 # Verified per-harness turn-end hooks are installed automatically where enabled; some live outside the worktree.
 # Kimi uses one surgically installed Firstmate region in $HOME/.kimi-code/config.toml,
@@ -303,7 +335,7 @@
 # plus a gitignored .fm-grok-turnend worktree pointer and a state token.
 # muse installs no hook at all - its plugin engine is off in the default build - so
 # it writes state/<id>.muse-session to bind the pane to muse's own session event
-# log; muse, gemini, and agy are crewmate/scout only and are refused for --secondmate.
+# log; muse, gemini, agy, and devin are crewmate/scout only and are refused for --secondmate.
 # rovo installs no hook either - its eventHooks fire at tool granularity only,
 # never turn-end - so it carries no busy-source wiring at all and no turn-end
 # hook. A positional brief is dead-on-arrival (rovo loads, never works, and drops
@@ -475,6 +507,25 @@ case "$CLAUDE_PERMISSION_MODE" in
 auto) CLAUDE_PERM_FLAG='--permission-mode auto' ;;
 *) CLAUDE_PERM_FLAG='--dangerously-skip-permissions' ;;
 esac
+# config/lavish-axi-host is the primary-owned per-machine address for the
+# shared Lavish server. Read it once per launch and refuse malformed values so
+# every worker reaches the same server instead of starting a second one.
+if ! LAVISH_AXI_HOST_CONFIG_PRESENT=$(fm_config_source_present "$CONFIG/lavish-axi-host"); then
+  exit 1
+fi
+if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/lavish-axi-host" ] || [ ! -r "$CONFIG/lavish-axi-host" ]; then
+    echo "error: config/lavish-axi-host must be a readable regular file" >&2
+    exit 1
+  fi
+  LAVISH_AXI_HOST=$(cat "$CONFIG/lavish-axi-host") || exit 1
+  case "$LAVISH_AXI_HOST" in
+    ''|*[[:space:][:cntrl:]]*)
+      echo "error: config/lavish-axi-host must contain one non-empty address without whitespace" >&2
+      exit 1
+      ;;
+  esac
+fi
 SUB_HOME_MARKER=".fm-secondmate-home"
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   fm_backlog_directory_present "$STATE" "state directory" || {
@@ -486,6 +537,8 @@ fi
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: spawn refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -1029,6 +1082,7 @@ spawn_remote_secondmate() {
     echo "error: remote secondmate $id launched, but its reply source could not be armed; endpoint metadata is preserved" >&2
     return 1
   fi
+  [ ! -e "$CONFIG/fleet-ledger" ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$id" secondmate "" "$harness" "${model#-}" || true
   echo "spawned $id harness=$harness kind=secondmate mode=secondmate yolo=off window=remote:$id worktree=$home remote=$host backend=$remote_backend"
   return 0
 }
@@ -1353,9 +1407,12 @@ fi
 # an existing task is legitimate branch recovery (fm-control drives it through
 # this same entrypoint), so only a fresh spawn refuses the branch actor
 # (contract: bin/fm-lease-lib.sh; no-op in homes without a branch actor). While
-# the away-posture record exists main is parked and a fresh spawn of
-# already-queued work relocates to the branch, under the record's spend cap
-# below - the same cap main meets in that posture.
+# the away-posture record exists main is parked and a fresh spawn of queued
+# work relocates to the branch, under the record's spend cap below - the same
+# cap main meets in that posture. Queued means a dispatchable backlog item:
+# one already queued at entry, or one the branch filed itself because the
+# captain's away words explicitly call for that work (its backlog note cites
+# the words); filing the item the captain asked for is not inventing work.
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
 if [ "$RELAUNCH" -ne 1 ]; then
@@ -1402,7 +1459,7 @@ spawn_require_relocated_queued_work() {
   fi
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
   if ! fm_backlog_row_probe "$DATA" "$ID" || [ "$FM_BACKLOG_ROW_STATE" != "queued no no" ]; then
-    echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only already-queued unblocked work; task $ID has no dispatchable backlog item in this home" >&2
+    echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only queued unblocked work (already queued, or filed by the branch from the captain's away words); task $ID has no dispatchable backlog item in this home" >&2
     exit 1
   fi
 }
@@ -1512,6 +1569,9 @@ RAW_LAUNCH=0
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
+# 1 when the recorded endpoint is authoritatively gone and this relaunch must
+# create a fresh one for the task rather than adopt its recorded address.
+RELAUNCH_REBIND=0
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "${#POS[@]}" -eq 1 ] || {
     echo "error: --relaunch takes the task id only; its project or home comes from the task's own record" >&2
@@ -1545,14 +1605,69 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: backend '$BACKEND' has no recovery-grade agent-state classifier, so a relaunch cannot prove the previous agent exited; refusing rather than risking two agents in one endpoint" >&2
     exit 1
   }
+  # Two states are agent-free, and both license a relaunch:
+  #   dead    - the endpoint exists and confidently holds no agent. The
+  #             endpoint is ADOPTED, so the task keeps its exact address.
+  #   missing - the endpoint itself is gone. There is no endpoint AND therefore
+  #             no agent, so a relaunch cannot adopt it: it CREATES a fresh
+  #             endpoint in the recorded worktree and the published record
+  #             rebinds to it.
+  # `missing` is NOT one state, and that is what the duplicate-agent argument
+  # turns on. fm_backend_agent_state's per-backend `missing` conflates "the
+  # endpoint was DESTROYED" with "the endpoint is UNREACHABLE from here right
+  # now", and an unreachable endpoint can still hold the live agent this
+  # relaunch would duplicate. So absence is PROVEN before it may rebind, never
+  # inferred from a failed read - and only HERDR can prove it:
+  #   herdr - the recorded session's server is started, and the recorded pane is
+  #           RE-READ through that session's own socket. `dead` means the pane
+  #           survived the restart and is adopted after all; `alive` means the
+  #           agent came back and refuses; only a second `missing` proves the
+  #           pane itself did not survive.
+  #   tmux  - REFUSES, always. A task record carries no socket identity for its
+  #           endpoint, and a server-wide inventory describes only the server
+  #           this process addresses, so no read available here can tell "gone"
+  #           from "on a server I cannot see". A tmux `missing` therefore stays
+  #           as deadlocked as it was before this change - deliberately, and
+  #           with the reason stated rather than guessed past.
+  # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
+  # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
+  # owns that vocabulary). The proof itself lives in one place for the whole
+  # control plane - fm_control_endpoint_absence_verdict - so `exit` and
+  # `relaunch` cannot reach two different answers about one endpoint.
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
-  [ "$RELAUNCH_STATE" = dead ] || {
-    echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
-    exit 1
-  }
+  if [ "$RELAUNCH_STATE" = missing ]; then
+    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET")
+    case "${RELAUNCH_ABSENCE%%$'\t'*}" in
+      gone) RELAUNCH_STATE=missing ;;
+      dead) RELAUNCH_STATE=dead ;;
+      alive) RELAUNCH_STATE=alive ;;
+      *)
+        echo "error: task $ID's recorded endpoint $RELAUNCH_TARGET reads 'missing', but ${RELAUNCH_ABSENCE#*$'\t'}. An endpoint that cannot be proven absent may still hold a live agent on this task's worktree; refusing rather than launching a second agent into it" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  case "$RELAUNCH_STATE" in
+    dead) ;;
+    missing) RELAUNCH_REBIND=1 ;;
+    *)
+      echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
+      exit 1
+      ;;
+  esac
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
+  # A secondmate whose endpoint is gone already has ONE owner for that
+  # recovery: the session-start liveness sweep respawns it with
+  # `fm-spawn.sh <id> --secondmate`, which stands its home's own workspace back
+  # up (bin/fm-bootstrap.sh; the secondmate-provisioning skill). Rebinding one
+  # here as well would be a second path to the same outcome, so this refuses
+  # and names the one that owns it.
+  if [ "$RELAUNCH_REBIND" -eq 1 ] && [ "$KIND" = secondmate ]; then
+    echo "error: secondmate $ID's recorded endpoint is gone; its recovery is owned by the secondmate respawn path, not by relaunch (run bin/fm-spawn.sh $ID --secondmate, or let the session-start liveness sweep do it)" >&2
+    exit 1
+  fi
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
@@ -1571,6 +1686,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
     }
   fi
   if [ "$BACKEND" = herdr ]; then
+    # fm-spawn uses HERDR_PANE_ID for the TASK's pane, while the herdr adapter
+    # reads that SAME name as the pane THIS process is itself running in
+    # (fm_backend_herdr_launcher_identity). The record is about to overwrite it,
+    # so keep what herdr actually injected: a rebind still has to prove its own
+    # launcher identity, and a task's recorded pane is not it.
+    RELAUNCH_LAUNCHER_PANE_ID=${HERDR_PANE_ID:-}
     HERDR_SES=$(fm_meta_get "$RELAUNCH_META" herdr_session)
     HERDR_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_workspace_id)
     HERDR_TAB_ID=$(fm_meta_get "$RELAUNCH_META" herdr_tab_id)
@@ -1589,7 +1710,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-  '' | claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy)
+  '' | claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin)
     ARG3=${POS[1]:-}
     ;;
   *' '*)
@@ -1885,6 +2006,10 @@ launch_template() {
   # Its turn-end and busy-state signals do NOT ride the launch command:
   # they are project hooks written into the worktree below.
   gemini) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS GEMINI_CLI_TRUST_WORKSPACE=true GEMINI_CLI_SYSTEM_SETTINGS_PATH=__GEMINISETTINGS__ gemini -y __MODELFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+  # Devin receives the typed launch envelope after --. Its private config
+  # appends native worker lifecycle hooks. Clear NO_COLOR so the shared
+  # composer guard can distinguish the dim placeholder from a real draft.
+  devin) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u FM_OMP_HARNESS -u ATLASSIAN_AGENT_TYPE -u ROVODEV_CLI -u NO_COLOR __DEVINBIN__ --permission-mode dangerous --respect-workspace-trust false --config __DEVINCONFIG__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
   # Kimi Code rejects a positional prompt, so it launches bare and receives
   # only an absolute brief pointer after the TUI readiness gate below.
   # Its turn-end signal is a globally configured Stop hook plus a guarded
@@ -1995,7 +2120,7 @@ case "$ARG3" in
   ;;
 esac
 
-# muse, gemini, and agy are verified as CREWMATE/SCOUT adapters only. A secondmate is
+# muse, gemini, agy, and devin are verified as CREWMATE/SCOUT adapters only. A secondmate is
 # a firstmate instance, so it needs a primary supervision protocol.
 # gemini has none: docs/supervision-protocols/ carries no gemini wake protocol
 # and this task verified only crewmate-side launch, busy state, interrupt, and
@@ -2007,7 +2132,9 @@ esac
 # secondmate whose supervision cycle could never be armed.
 # agy has none either: it exposes no hook surface for primary supervision and
 # docs/supervision-protocols/ carries no agy wake protocol (agy 1.2.0).
-if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ]; }; then
+# devin has none either: only its worker lifecycle hooks are verified, and
+# docs/supervision-protocols/ carries no devin wake protocol (devin 3000.11.1).
+if [ "$KIND" = secondmate ] && { [ "$HARNESS" = muse ] || [ "$HARNESS" = gemini ] || [ "$HARNESS" = agy ] || [ "$HARNESS" = devin ]; }; then
   echo "error: $HARNESS is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
   exit 1
 fi
@@ -2022,6 +2149,12 @@ if [ "$KIND" = secondmate ] && [ "$HARNESS" = rovo ]; then
 fi
 
 case "$HARNESS" in
+devin)
+  DEVIN_BIN=$(command -v devin) || {
+    echo "error: devin executable not found on PATH" >&2
+    exit 1
+  }
+  ;;
 pi | pi-signed)
   PI_BIN=$(resolve_pi_executable "$HARNESS") || {
     echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
@@ -2226,7 +2359,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy)
+  claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin)
     printf -- '--model %s ' "$(shell_quote "$model")"
     ;;
   esac
@@ -3006,7 +3139,7 @@ if fm_backlog_transition_applies "$CONFIG" "$DATA" "$KIND"; then
   spawn_preflight_actor=$(fm_lease_actor) || exit "$FM_LEASE_REFUSE_EXIT"
   if [ "$spawn_preflight_actor" = branch ] && fm_lease_away_relocated; then
     if [ "$BACKLOG_ROW_STATE" != "queued no no" ]; then
-      echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only already-queued unblocked work; task $ID has no dispatchable backlog item in this home" >&2
+      echo "error: spawn refused - the supervision branch under the away-posture record may dispatch only queued unblocked work (already queued, or filed by the branch from the captain's away words); task $ID has no dispatchable backlog item in this home" >&2
       exit 1
     fi
   elif ! fm_backlog_row_dispatchable "$BACKLOG_ROW_STATE"; then
@@ -3033,16 +3166,92 @@ fi
 
 W="fm-$ID"
 if [ "$RELAUNCH" -eq 1 ]; then
-  # Adopt the recorded endpoint instead of creating one. This is what keeps a
-  # relaunch a REPLACEMENT rather than a second copy of the task: no new
-  # terminal, no second worktree, and every uncommitted change left exactly
-  # where the previous agent left it.
-  T=$RELAUNCH_TARGET
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
+  # Either way the worktree is REUSED, never re-created: its branch, commits and
+  # uncommitted changes are exactly as the previous agent left them, and nothing
+  # below may touch them.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
-  WT_TARGET=$T
-  SES=${T%%:*}
+  if [ "$RELAUNCH_REBIND" -eq 0 ]; then
+    # Adopt the recorded endpoint instead of creating one. This is what keeps a
+    # relaunch a REPLACEMENT rather than a second copy of the task: no new
+    # terminal, no second worktree, and every uncommitted change left exactly
+    # where the previous agent left it.
+    T=$RELAUNCH_TARGET
+    WT_TARGET=$T
+    SES=${T%%:*}
+  else
+    # The recorded endpoint is authoritatively gone, so there is nothing to
+    # adopt: create ONE fresh endpoint for the same task, opened directly in the
+    # recorded worktree. The record published below writes window= (and herdr's
+    # ids) from these values, which is the whole rebind - the task id, brief,
+    # worktree, armed poll and status log are untouched.
+    #
+    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
+    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
+    # every read is scoped to the session the record names
+    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
+    # secondmate were already refused, so there is no dispatch left to make.
+    #
+    # This deliberately uses the FLAT container shape rather than Herdr's
+    # presentation projection: projection is a presentation-only layout that is
+    # never endpoint or ownership authority, and flat is already the documented
+    # fallback for every recovery it cannot bind exactly
+    # (docs/herdr-backend.md "Presentation spaces").
+    #
+    # KNOWN LIMITATION (bead fm-herdr-rebind-leak-20260913): the tab minted
+    # below is registered with no abort cleanup, so a later refusal leaves that
+    # pane behind and a retry mints another. Documented in
+    # docs/agent-control.md rather than fixed here, because the remedy is
+    # machinery the ordinary flat spawn path does not have either.
+    #
+    # Re-create the tab under the RECORDED herdr session. Without the explicit
+    # session the container would resolve from the AMBIENT one
+    # (${HERDR_SESSION:-default}), so reclaiming a task recorded on a named
+    # session from a seat that is not in it would silently relocate the task
+    # onto another herdr server - an identity change, published as a
+    # self-consistent but wrong record.
+    HERDR_REBIND_SES=${RELAUNCH_TARGET%%:*}
+    HERDR_CONTAINER_RAW=$(HERDR_PANE_ID="$RELAUNCH_LAUNCHER_PANE_ID" \
+      fm_backend_herdr_container_ensure "$PROJ_ABS" launcher-home "$HERDR_REBIND_SES") || {
+      # container_ensure returns 1 for several unrelated reasons - a failed
+      # version check, a server that will not start, an ambiguous workspace
+      # label, a cross-session launcher identity, a failed workspace create -
+      # and each already printed its own accurate message. Add only what this
+      # layer actually knows, and name the session mismatch solely when there
+      # IS one, rather than asserting a cause this condition cannot establish.
+      #
+      # A seat with NO herdr pane never reaches the cross-session guard at all:
+      # fm_backend_herdr_launcher_identity returns 2 for it and the placement
+      # falls back to the recorded session's labeled container, which is what
+      # makes a plain ssh or cron reclaim work. Its ambient session still reads
+      # `default` (fm_backend_herdr_session's fallback), so the inequality alone
+      # would fire for EVERY named-session task reclaimed from a plain shell and
+      # send the operator chasing a session mismatch that was never the cause.
+      HERDR_AMBIENT_SES=$(fm_backend_herdr_session)
+      if [ -n "$RELAUNCH_LAUNCHER_PANE_ID" ] && [ "$HERDR_AMBIENT_SES" != "$HERDR_REBIND_SES" ]; then
+        echo "error: task $ID's endpoint could not be re-created in its recorded herdr session '$HERDR_REBIND_SES'; this seat is running in herdr session '$HERDR_AMBIENT_SES', and a reclaim never moves a task to another session" >&2
+      else
+        echo "error: task $ID's endpoint could not be re-created in its recorded herdr session '$HERDR_REBIND_SES'; see the refusal above for what failed" >&2
+      fi
+      exit 1
+    }
+    CONTAINER=${HERDR_CONTAINER_RAW%%$'\t'*}
+    HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
+    HERDR_SES=${CONTAINER%%:*}
+    HERDR_WORKSPACE_ID=${CONTAINER#*:}
+    HERDR_TASK_IDS=$(fm_backend_herdr_create_task "$CONTAINER" "$W" "$WT" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+    read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
+$HERDR_TASK_IDS
+EOF
+    if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
+      echo "error: herdr did not return a tab/pane id for $W" >&2
+      exit 1
+    fi
+    T="$HERDR_SES:$HERDR_PANE_ID"
+    SES=$HERDR_SES
+    WT_TARGET=$T
+  fi
 else
   case "$BACKEND" in
   tmux)
@@ -3473,7 +3682,7 @@ kimi_wait_for_delivery() {
 }
 
 kimi_spawn_fail() { # <detail>
-  printf 'failed: %s\n' "$1" >>"$STATE/$ID.status"
+  printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
 }
 
@@ -3541,7 +3750,7 @@ rovo_wait_for_delivery() {
 }
 
 rovo_spawn_fail() { # <detail>
-  printf 'failed: %s\n' "$1" >>"$STATE/$ID.status"
+  printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
   rovo_endpoint_cleanup
 }
@@ -3614,7 +3823,7 @@ agy_wait_for_working() {
 }
 
 agy_spawn_fail() {  # <detail>
-  printf 'failed: %s\n' "$1" >> "$STATE/$ID.status"
+  printf '%s\n' "$(status_stamp_line "failed: $1")" >>"$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
   rovo_endpoint_cleanup
 }
@@ -3791,7 +4000,20 @@ esac
 # Nested (not a bare /tmp/fm-<id>/gotmp) so other per-task temp can live alongside
 # later, and teardown cleans one deterministic path. GOTMPDIR (not TMPDIR) is the
 # targeted knob: TMPDIR is too broad (affects every program's temp, not just Go's).
+# The root is private (0700) because its path is predictable under a shared
+# /tmp: a root that already exists is reused only as a real directory owned by
+# this user and writable by nobody else, then tightened, so no other local user
+# can plant or swap a file in it. The staged launch command lives in a sibling
+# directory namespaced by home identity, not in this shared per-id root.
 TASK_TMP="/tmp/fm-$ID"
+if ! (umask 077 && mkdir "$TASK_TMP") 2>/dev/null; then
+  if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ] ||
+    [ -n "$(find "$TASK_TMP" -prune \( -perm -g=w -o -perm -o=w \) -print 2>/dev/null)" ] ||
+    ! chmod 700 "$TASK_TMP"; then
+    echo "error: task temp root $TASK_TMP already exists and is not a private directory owned by this user; refusing to stage the launch command there; inspect and remove it, then retry" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$TASK_TMP/gotmp"
 
 # Per-harness turn-end hook where enabled: a file that touches
@@ -3850,7 +4072,7 @@ if [ "$KIND" != secondmate ]; then
     }
     [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
     ;;
-  gemini)
+  gemini | devin)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
       BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
         echo "error: failed to arm the busy-state contract for $ID" >&2
@@ -3892,6 +4114,11 @@ if [ "$KIND" != secondmate ]; then
 {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}]}}
 EOF
     exclude_path '.claude/settings.local.json'
+    ;;
+  devin)
+    if [ "$RAW_LAUNCH" -eq 0 ]; then
+      "$SCRIPT_DIR/fm-devin-config.sh" "$STATE_REAL" "$ID" "$BUSY_GEN" || exit 1
+    fi
     ;;
   gemini)
     if [ "$RAW_LAUNCH" -eq 0 ]; then
@@ -4430,11 +4657,15 @@ pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
 cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;
 gemini) LAUNCH=${LAUNCH//__GEMINISETTINGS__/"$(shell_quote "$STATE_REAL/$ID.gemini-settings.json")"} ;;
 omp) LAUNCH=${LAUNCH//__OMPBIN__/"$(shell_quote "$OMP_BIN")"} ;;
+devin)
+  LAUNCH=${LAUNCH//__DEVINBIN__/"$(shell_quote "$DEVIN_BIN")"}
+  LAUNCH=${LAUNCH//__DEVINCONFIG__/"$(shell_quote "$STATE_REAL/$ID.devin-config.json")"}
+  ;;
 agy) LAUNCH=${LAUNCH//__AGYBIN__/"$(shell_quote "$AGY_BIN")"} ;;
 esac
 LAUNCH=${LAUNCH//__WORKTREE__/$sq_worktree}
 case "$HARNESS" in
-claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy)
+claude | codex | opencode | pi | pi-signed | grok | kimi | gemini | muse | rovo | agy | devin)
   LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI $LAUNCH"
   ;;
 esac
@@ -4483,6 +4714,9 @@ fi
 # LAUNCH_ENV_PREFIX construction below sets it again at the `env -i` boundary,
 # so under an enabled allowlist the switch is established before the wrapping
 # `/bin/sh` starts rather than only inside the command that shell runs.
+if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
+  LAUNCH="export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST"); $LAUNCH"
+fi
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 if [ -z "$SPAWN_TRACEPARENT" ] && [ "$RELAUNCH" -eq 1 ]; then
   LAUNCH="unset TRACEPARENT; $LAUNCH"
@@ -4522,6 +4756,9 @@ spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 # pre-launch channel, so later commands in that shell inherit it too. The launch
 # command independently establishes the value for the agent process itself.
 spawn_send_text_line "$T" "export COMPACT_ADVISER_DISABLE=1"
+if [ "$LAVISH_AXI_HOST_CONFIG_PRESENT" = 1 ]; then
+  spawn_send_text_line "$T" "export LAVISH_AXI_HOST=$(shell_quote "$LAVISH_AXI_HOST")"
+fi
 # Mark the pane as a task worker so bin/fm-test-run.sh can refuse to run the
 # suite in the repository's primary checkout. Ship and scout workers are the
 # ones assigned an isolated worktree; a secondmate runs its own home instead.
@@ -4556,7 +4793,7 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
     HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
     CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION \
-    FM_TASK_ID COMPACT_ADVISER_DISABLE \
+    FM_TASK_ID COMPACT_ADVISER_DISABLE LAVISH_AXI_HOST \
     $LAUNCH_ENV_NAMES; do
     # Only validated names enter shell syntax. Values expand once, quoted, in
     # the pane shell and never become source text or spawn-process snapshots.
@@ -4580,8 +4817,55 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   fi
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
+# Implement the launch-delivery contract in this script's header. The full
+# home-identity hash isolates equal task ids across homes, and the spawn token in
+# the final filename keeps a buffered source line bound to this incarnation.
+spawn_launch_home_token() {
+  local home=$1 root hash
+  root=$(cd "$home" 2>/dev/null && pwd -P) || root=$home
+  if command -v shasum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$root" | shasum -a 256 | awk '{print $1}')
+  elif command -v sha256sum >/dev/null 2>&1; then
+    hash=$(printf '%s' "$root" | sha256sum | awk '{print $1}')
+  else
+    return 1
+  fi
+  case "$hash" in
+    *[!0-9a-fA-F]*|'') return 1 ;;
+  esac
+  printf '%s' "$hash"
+}
+LAUNCH_HOME_TOKEN=$(spawn_launch_home_token "$FM_HOME") || LAUNCH_HOME_TOKEN=
+if [ -z "$LAUNCH_HOME_TOKEN" ]; then
+  echo "error: could not derive a home identity for the staged launch file" >&2
+  exit 1
+fi
+case "$SPAWN_GEN" in
+  *[!A-Za-z0-9.]*|'') echo "error: spawn incarnation token is not a usable launch-file nonce" >&2; exit 1 ;;
+esac
+LAUNCH_DIR="/tmp/fm-$ID+$LAUNCH_HOME_TOKEN"
+if ! (umask 077 && mkdir "$LAUNCH_DIR") 2>/dev/null; then
+  if [ -L "$LAUNCH_DIR" ] || [ ! -d "$LAUNCH_DIR" ] || [ ! -O "$LAUNCH_DIR" ] ||
+    [ -n "$(find "$LAUNCH_DIR" -prune \( -perm -g=w -o -perm -o=w \) -print 2>/dev/null)" ] ||
+    ! chmod 700 "$LAUNCH_DIR"; then
+    echo "error: task launch directory $LAUNCH_DIR already exists and is not a private directory owned by this user; refusing to stage the launch command there; inspect and remove it, then retry" >&2
+    exit 1
+  fi
+fi
+LAUNCH_FILE="$LAUNCH_DIR/launch.$SPAWN_GEN.sh"
+LAUNCH_STAGE="$LAUNCH_DIR/.launch.$SPAWN_GEN.tmp"
+if [ -e "$LAUNCH_FILE" ] || [ -L "$LAUNCH_FILE" ]; then
+  echo "error: task launch file $LAUNCH_FILE already exists; refusing to replace it" >&2
+  exit 1
+fi
+if ! (umask 077 && printf '%s\n' "$LAUNCH" >"$LAUNCH_STAGE" &&
+  chmod 0600 "$LAUNCH_STAGE" && mv -f "$LAUNCH_STAGE" "$LAUNCH_FILE"); then
+  rm -f "$LAUNCH_STAGE"
+  echo "error: could not stage the launch command at $LAUNCH_FILE" >&2
+  exit 1
+fi
 sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
+spawn_send_literal "$T" ". $(shell_quote "$LAUNCH_FILE")"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   HERDR_PROJECTION_ABORT_CLEANUP=0
@@ -4726,4 +5010,6 @@ SPAWN_META_LOCK_HELD=0
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
+# Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
+[ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT"
