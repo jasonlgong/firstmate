@@ -737,14 +737,9 @@ test_turn_ended_provably_working_absorbed() {
   pass "a bare turn-end whose crew is provably working (busy pane) is absorbed"
 }
 
-# --- a no-verb signal whose crew is NOT provably working SURFACES -------------
-# This is the swallowed-finish fix: a crew that finished (or stopped and waits)
-# reports its final turn-end with no captain-relevant status and no running
-# pipeline, so the wake must surface instead of being absorbed.
-
-# The independent grace-window fixtures from the validator: a changed turn-end
-# is observed first, then deleted or restored to its already-reported timestamp
-# during the real 30-second grace. Both first-scan signals must still wake.
+# A changed turn-end is observed first, then deleted or restored to its
+# already-reported timestamp during the real 30-second grace.
+# Both first-scan signals must still wake.
 run_turnend_grace_case() (
   local name=$1 dir state marker watcher i trace out
   dir="$TMP_ROOT/grace-turnend-$name"; state="$dir/state"; marker="$state/unit.turn-ended"
@@ -799,6 +794,11 @@ run_turnend_grace_case() (
 
 test_turnend_grace_delete() { run_turnend_grace_case delete || fail "deleted turn-end grace case failed"; }
 test_turnend_grace_restore() { run_turnend_grace_case restore || fail "restored turn-end grace case failed"; }
+
+# --- a no-verb signal whose crew is NOT provably working SURFACES -------------
+# This is the swallowed-finish fix: a crew that finished (or stopped and waits)
+# reports its final turn-end with no captain-relevant status and no running
+# pipeline, so the wake must surface instead of being absorbed.
 
 test_turn_ended_not_working_surfaced() {
   local dir state fakebin out drain_out pid
